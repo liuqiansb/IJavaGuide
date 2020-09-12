@@ -360,13 +360,171 @@ function process(){
 
    ```bash
    slaveof 主库IP 主库端口
-   # 注意：每一次和master断开之后，都需要重新连接，除非配置进redis.conf中
+   # 注意：每一次和master断开之后，都需要重新连接，除非配置进redis.conf
+   ```
+
+3. 修改文件细节操作
+
+   ```bash
+   logfile="slave.log"
+   dbfilename = "dump.rdb"
+   port = "6379"
+   pidfile = "/var/run/redis.pid"
+   ```
+
+4. 一主二仆
+
+   ```
+   # 查看当前机器的主从状态
+   192.168.43.129> info replication 
+   # 记住如果redis中主库设置了密码，则需要在从库中配置主库的连接密码
+   masterauth = 123456
    
+   问题：对于在执行slaveof操作前的数据，是否备份？
+   答案：备份，从机会备份所有的主机数据
+   
+   问题：从机和主机执行同样的插入操作，怎样同步？
+   答案：从机没有写权限，所以不存在这种状态，所以从机永远不会执行写操作
+   
+   问题：主机挂掉了，从机咋办？
+   答案：在不配置的情况下，从机将无作为
+   
+   问题：主句挂掉重新连接后，主从关系是否持续
+   答案：主从关系继续
+   
+   问题：从机挂掉了，能否重新连接上主机
+   答案：从机挂掉之后，不能重新连接上主机，需要重新执行slaveof，除非写入配置文件
+   
+   
+   **注意：在默认的配置情况下,主从的关系十分脆弱，无法达成容灾效果，主机一旦挂掉，从机集体懵逼，从机一旦挂掉，不能重新连接**
    ```
 
    
 
-3. 修改文件细节操作
+5. 薪火相传
+
+   ```
+   1. 从机的从机，链路传递主从复制，主要目的是降低了主机的负担，当一台主机需要连接多个slave的时候,可以有效的减轻master的写压力
+     
+   问题：这中间层的slave是主机还是从机
+   答案：还是从机，但是它也有属于自己的从机
+   
+   # 反客为主，从新分配,让当前数据库成为主库，哪怕原来的主库重新连接上来了也不管
+   slaveof no one
+   ```
+
+   
+
+6. 复制原理
+
+   ```
+   slave启动成功连接master之后，会发送一个sync命令
+   master接到命令后启动后台存盘进程，同时收集所有接收到的用于修改数据集的命令，在后台进程中执行完毕后，将传送整个数据文件到slave,以完成一次完全同步
+   
+   全量复制：slave第一次连接到master的时候，master将会给全量数据
+   增量复制：master将继续将所有的修改命令依次传给slave
+   
+   注意：任何一次slave的断开连接，下一次再连的时候，master发送的都会是全量数据
+   ```
+
+   
+
+7. 哨兵模式**(重点)**
+
+   ```
+   1.哨兵模式解决的问题：在传统模式下，主机挂掉，从机要么原地等死，要么需要人工主动去重新设置master，这样特别不方便，哨兵的作用主要在于监控master，并在master宕机的情况下帮忙选出合适的继承者
+   
+   
+   2.引入sentinel的概念
+   vi /usr/local/redis/sentinel.conf
+   # 哨兵监听文件配置详解
+   # sentinel monito host6379 原始master的ip和端口  票数限制
+   sentinel monito master 192.168.43.130 6379 1
+   # 哨兵启动端口
+   port 8001
+   # 哨兵后台启动
+   daemonize yes
+   # 哨兵日志文件
+   logfile "./sentinel.log"
+   # 哨兵工作目录
+   dir ./ 
+   # master多久未连接算宕机
+   sentinel down-after-millisenconds master 1500
+   # master宕机后，进行从库上位，多长时间算上位失败
+   sentinel failover-timeout master 10000
+   # 配置master的密码
+   sentinel auth-pass master 123456
+   # 多哨兵模式，还有哪些哨兵也在监控这个master
+   sentinel known-sentinel master 127.0.0.1 8002 0aca3a57038e2907c8a07be2b3c0d15171e44da5
+   sentinel known-sentinel master 127.0.0.1 8003 ac1ef015411583d4b9f3d81cee830060b2f29862
+   
+   
+   # 启动哨兵
+   redis-sentinel /usr/local/redis/sentinel.conf
+   
+   # 当master断开之后，哨兵将会重新设置master，当原来的master回来的时候，也会被设置为slave
+   # 缺点：主从复制主要是延时问题
+   ```
+
+
+##### spring整合redis
+
+```xml
+ <!-- Redis 连接池配置 -->
+    <bean id="jedisPoolConfig" class="redis.clients.jedis.JedisPoolConfig"
+          p:maxTotal="30"
+          p:maxIdle="10"
+          p:minIdle="5"
+          p:minEvictableIdleTimeMillis="30000"
+          p:testOnBorrow="${redis.testOnBorrow}"
+    />
+
+    <!-- Redis 工厂，相当于官方的 JedisPool -->
+    <bean id="jedisConnectionFactory" class="org.springframework.data.redis.connection.jedis.JedisConnectionFactory"
+          p:hostName="${redis.host}"
+          p:password="${redis.password}"
+          p:port="${redis.port}"
+          p:database="${redis.default.db}"
+          p:poolConfig-ref="jedisPoolConfig"/>
+
+    <!-- 用于 Java 与 JSON 的序列化和反序列化 -->
+    <bean id="jackson2JsonRedisSerializer" class="org.springframework.data.redis.serializer.GenericJackson2JsonRedisSerializer">
+    </bean>
+    <!-- 字符串的序列化 -->
+    <bean id="stringRedisSerializer" class="org.springframework.data.redis.serializer.StringRedisSerializer"/>
+
+    <!-- 对 Redis 的封装 -->
+    <bean id="redisTemplate" class="org.springframework.data.redis.core.RedisTemplate"
+          p:connectionFactory-ref="jedisConnectionFactory"
+          p:keySerializer-ref="stringRedisSerializer"
+          p:valueSerializer-ref="jackson2JsonRedisSerializer"
+          p:hashKeySerializer-ref="stringRedisSerializer"
+          p:hashValueSerializer-ref="jackson2JsonRedisSerializer"
+    />
+
+    <!-- 所有键与值都是 String 类型的 RedisTemplate -->
+    <bean id="stringRedisTemplate" class="org.springframework.data.redis.core.StringRedisTemplate" p:connectionFactory-ref="jedisConnectionFactory"/>
+
+```
+
+```
+//        Jackson2JsonRedisSerializer jackson2JsonRedisSerializer = new Jackson2JsonRedisSerializer(Object.class);
+//        ObjectMapper om = new ObjectMapper();
+//        // om.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
+//        om.setVisibility(PropertyAccessor.ALL, JsonAutoDetect.Visibility.ANY);
+//        om.enableDefaultTyping(ObjectMapper.DefaultTyping.NON_FINAL);
+//
+//
+//        SimpleFilterProvider filterProvider = new SimpleFilterProvider();
+//        filterProvider.setDefaultFilter(SimpleBeanPropertyFilter.serializeAllExcept("valid"));
+//        om.setFilterProvider(filterProvider);
+//
+//
+//        jackson2JsonRedisSerializer.setObjectMapper(om);
+//
+//        template.setValueSerializer(jackson2JsonRedisSerializer);
+//        template.setHashValueSerializer(jackson2JsonRedisSerializer);
+```
 
 
 
