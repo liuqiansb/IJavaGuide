@@ -16,7 +16,7 @@
 
 Apache Shiro 是 Java 的一个安全框架，提供以下功能
 
-![img](https://atts.w3cschool.cn/attachments/image/wk/shiro/1.png)
+![img](C:\Users\皿煮国的潜逃败类\Desktop\1.png)
 
 - **Authentication**:身份认证 / 登录，验证用户是不是拥有相应的身份；
 - **Authorization**：授权，即权限验证，验证某个已认证的用户是否拥有某个权限；即判断用户是否能做事情
@@ -31,7 +31,7 @@ Apache Shiro 是 Java 的一个安全框架，提供以下功能
 
 ##### shiro的架构
 
-![img](https://atts.w3cschool.cn/attachments/image/wk/shiro/3.png)
+![img](C:\Users\皿煮国的潜逃败类\Desktop\3.png)
 
 - **Subject**：主体，代表了当前 “用户”,所有 Subject 都绑定到 SecurityManager，与 Subject 的所有交互都会委托给 SecurityManager
 - **SecurityManager**：安全管理器；即所有与安全有关的操作都会与 SecurityManager 交互；且它管理着所有 Subject,你可以把它看成 DispatcherServlet 前端控制器；
