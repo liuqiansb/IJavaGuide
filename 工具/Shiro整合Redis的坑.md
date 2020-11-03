@@ -1,10 +1,22 @@
 ##### Shiro整合Redis的坑
 
+- doGetAuthenticationInfo只有在登录那一次调用
+
+- doGetAuthorizationInfo方法每一次请求都会调用,除非设置缓存
+- 默认情况下Session中并没有存放用户的权限信息，而只有用户名和ip，所以doGetAuthorizationInfo每一次请求都会调用重新进行授权
+- 无论是使用拦截器还是注解进行的权限控制，都会调用doGetAuthorizationInfo方法，初步判断应该是第一次使用doGetAuthenticationInfo并存入session,后面每一次都使用session中的用户信息重新拉取权限信息
+
+
+
+账号：3530578
+
+密码：251303
+
 ##### shiro简介
 
 Apache Shiro 是 Java 的一个安全框架，提供以下功能
 
-![img](https://atts.w3cschool.cn/attachments/image/wk/shiro/1.png)
+![img](C:\Users\皿煮国的潜逃败类\Desktop\1.png)
 
 - **Authentication**:身份认证 / 登录，验证用户是不是拥有相应的身份；
 - **Authorization**：授权，即权限验证，验证某个已认证的用户是否拥有某个权限；即判断用户是否能做事情
@@ -19,7 +31,7 @@ Apache Shiro 是 Java 的一个安全框架，提供以下功能
 
 ##### shiro的架构
 
-![img](https://atts.w3cschool.cn/attachments/image/wk/shiro/3.png)
+![img](C:\Users\皿煮国的潜逃败类\Desktop\3.png)
 
 - **Subject**：主体，代表了当前 “用户”,所有 Subject 都绑定到 SecurityManager，与 Subject 的所有交互都会委托给 SecurityManager
 - **SecurityManager**：安全管理器；即所有与安全有关的操作都会与 SecurityManager 交互；且它管理着所有 Subject,你可以把它看成 DispatcherServlet 前端控制器；
@@ -59,7 +71,7 @@ public class testShiro {
         // 2.得到SecurityManger实例，并绑定给SecurityUtils,SecurityManger中有个realms属性，里面保存了所有的用户信息
         SecurityManager securityManager = factory.getInstance();
         SecurityUtils.setSecurityManager(securityManager);
-		
+
         // 3.得到Subject验证主体,该对象中有个securityManager
         Subject subject = SecurityUtils.getSubject();
 
@@ -220,57 +232,373 @@ public class MyRealm extends AuthorizingRealm {
 
 
 
-##### 极简版本的shiro权限
+##### 基于spring，拦截器，注解的WEB集成
 
 ```xml
-<!-- shiro配置 （需写在Spring MVC Servlet配置之前）-->
-<filter>
-    <filter-name>shiroFilter</filter-name>
-    <filter-class>org.springframework.web.filter.DelegatingFilterProxy</filter-class>
-    <!-- DelegatingFilterProxy的作用是根据当前拦截器名到IOC容器中找一个bean来处理 -->
-    <!-- 它就是个代理，真实的拦截器是IOC中的shiroFilter -->
-    <async-supported>true</async-supported>
-    <init-param>
-        <param-name>targetFilterLifecycle</param-name>
-        <param-value>true</param-value>
-    </init-param>
-</filter>
-<filter-mapping>
-    <filter-name>shiroFilter</filter-name>
-    <url-pattern>/*</url-pattern>
-</filter-mapping>
+<!-- web.xml -->
+<?xml version="1.0" encoding="UTF-8"?>
+<web-app xmlns="http://xmlns.jcp.org/xml/ns/javaee"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://xmlns.jcp.org/xml/ns/javaee http://xmlns.jcp.org/xml/ns/javaee/web-app_3_1.xsd"
+         version="3.1">
+    <display-name>Archetype Created Web Application</display-name>
+    <!--把applicationContext.xml加入到配置文件中-->
+    <context-param>
+        <param-name>contextConfigLocation</param-name>
+        <param-value>classpath*:spring.xml</param-value>
+    </context-param>
+    <listener>
+        <listener-class>org.springframework.web.context.ContextLoaderListener</listener-class>
+    </listener>
+
+    <!-- 代理拦截器，它将拦截转发给了ioc容器中的shiroFilter-->
+    <filter>
+        <filter-name>shiroFilter</filter-name>
+        <filter-class>org.springframework.web.filter.DelegatingFilterProxy</filter-class>
+        <init-param>
+            <param-name>targetFilterLifecycle</param-name>
+            <param-value>true</param-value>
+        </init-param>
+    </filter>
+    <filter-mapping>
+        <filter-name>shiroFilter</filter-name>
+        <url-pattern>/*</url-pattern>
+    </filter-mapping>
+    <!--配置springmvc-->
+    <servlet>
+        <servlet-name>springMVC</servlet-name>
+        <servlet-class>org.springframework.web.servlet.DispatcherServlet</servlet-class>
+        <init-param>
+            <!--配置spring.xml作为mvc的配置文件-->
+            <param-name>contextConfigLocation</param-name>
+            <param-value>classpath*:spring.xml</param-value>
+        </init-param>
+        <load-on-startup>1</load-on-startup>
+        <async-supported>true</async-supported>
+    </servlet>
+    <servlet-mapping>
+        <servlet-name>springMVC</servlet-name>
+        <url-pattern>/</url-pattern>
+    </servlet-mapping>
+</web-app>
 ```
 
 ```xml
-<?xml version="1.0" encoding="UTF-8"?>
 <beans xmlns="http://www.springframework.org/schema/beans"
-       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-       xsi:schemaLocation="http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans.xsd">
+       xmlns:context="http://www.springframework.org/schema/context"
+       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:mvc="http://www.springframework.org/schema/mvc"
+       xmlns:util="http://www.springframework.org/schema/util"
+       xsi:schemaLocation="http://www.springframework.org/schema/beans
+       http://www.springframework.org/schema/beans/spring-beans-3.0.xsd
+       http://www.springframework.org/schema/context
+       http://www.springframework.org/schema/context/spring-context-3.0.xsd http://www.springframework.org/schema/mvc http://www.springframework.org/schema/mvc/spring-mvc.xsd http://www.springframework.org/schema/util http://www.springframework.org/schema/util/spring-util.xsd">
+    <context:component-scan base-package="com.kiy" />
 
-    <bean id="shiroFilter" class="org.apache.shiro.spring.web.ShiroFilterFactoryBean">
-        <property name="securityManager" ref="securityManager"/>
-        <property name="loginUrl" value="/login"/>
-        <property name="unauthorizedUrl" value="/refuse.html"/>
-        <property name="filterChainDefinitions">
-            <value>
-                /logout = logout
-                /** = authc
-            </value>
-        </property>
-        <property name="successUrl" value="/index"/>
+
+    <bean class="org.springframework.web.servlet.view.InternalResourceViewResolver">
+        <property name="prefix" value="/pages/"/>
+        <property name="suffix" value=".jsp"/>
     </bean>
+
+    <mvc:annotation-driven />
+
+    <mvc:resources mapping="/javascript/**" location="/assets/js/"/>
+    <mvc:resources mapping="/styles/**" location="/assets/css/"/>
+    <mvc:resources mapping="/html/**" location="/assets/html/"/>
+
 
     <bean id="securityManager" class="org.apache.shiro.web.mgt.DefaultWebSecurityManager">
         <property name="realm" ref="userRealm"/>
     </bean>
 
-    <bean id="userRealm" class="com.kiy.shiro.realm.UserRealm"/>
+    <bean class="org.apache.shiro.spring.security.interceptor.AuthorizationAttributeSourceAdvisor">
+        <property name="securityManager" ref="securityManager"/>
+    </bean>
+    <bean id="lifecycleBeanPostProcessor" class="org.apache.shiro.spring.LifecycleBeanPostProcessor" />
+    <bean class="org.springframework.aop.framework.autoproxy.DefaultAdvisorAutoProxyCreator"
+          depends-on="lifecycleBeanPostProcessor">
+        <property name="proxyTargetClass" value="true" />
+    </bean>
 
+
+    <bean id="shiroFilter" class="org.apache.shiro.spring.web.ShiroFilterFactoryBean">
+        <property name="securityManager" ref="securityManager"/>
+        <property name="loginUrl" value="/login"/>
+        <property name="unauthorizedUrl" value="/refuse.html"/>
+        <!-- 
+        	使用配置形式的路由拦截规则，可对批量或对一些无法添加注解的url进行权限拦截
+		 -->
+        <property name="filters">
+            <util:map>
+                <entry key="permission" value-ref="permission"/>
+                <entry key="logout" value-ref="logout"/>                
+            </util:map>
+        </property>
+        <property name="filterChainDefinitions">
+            <value>
+                <!-- 登录拦截器 -->
+                /logout = logout
+                <!-- 所有url都需要登录 -->
+                /** = authc
+            </value>
+        </property>
+        <!-- 
+			请注意，shiro的默认验权跳转位置为上一次访问位置，所以大多数的时候successUrl是不起作用的，
+			它只有在session缓存中中没有用户请求地址时后才会生效
+		-->
+        <property name="successUrl" value="/test"/>
+    </bean>
+	<!-- 自定义验证和授权Realm -->
+    <bean id="userRealm" class="com.kiy.realm.UserRealm"/>
+    <!-- 自定义拦截器 -->
+    <bean id="permission" class="com.kiy.filter.PermissionFilter"/>
+    <bean id="logout" class="com.kiy.filter.CustomerLogoutFilter"/>
 </beans>
 ```
 
 ```java
- @RequestMapping("login")
+package com.kiy.realm;
+
+import org.apache.shiro.authc.*;
+import org.apache.shiro.authz.AuthorizationInfo;
+import org.apache.shiro.authz.SimpleAuthorizationInfo;
+import org.apache.shiro.realm.AuthorizingRealm;
+import org.apache.shiro.subject.PrincipalCollection;
+
+import java.util.HashSet;
+import java.util.Set;
+
+/**
+ * @title:
+ * @author: 80002834
+ * @create: 2020-08-14 16:05:58
+ **/
+public class UserRealm  extends AuthorizingRealm {
+    @Override
+    protected AuthorizationInfo doGetAuthorizationInfo(PrincipalCollection principalCollection) {
+        SimpleAuthorizationInfo simpleAuthorizationInfo = new SimpleAuthorizationInfo();
+        Set<String> strings = new HashSet<>();
+        strings.add("/test");
+        simpleAuthorizationInfo.setStringPermissions(strings);
+        return simpleAuthorizationInfo;
+    }
+
+    @Override
+    protected AuthenticationInfo doGetAuthenticationInfo(AuthenticationToken authenticationToken) throws AuthenticationException {
+        String username = (String)authenticationToken.getPrincipal();
+        String password = new String((char[])authenticationToken.getCredentials());
+        if(!"lisi".equals(username)) {
+            throw new UnknownAccountException();
+        }
+        if(!"123".equals(password)) {
+            throw new IncorrectCredentialsException();
+        }
+        //如果身份认证验证成功，返回一个AuthenticationInfo实现；
+        return new SimpleAuthenticationInfo(username, password, getName());
+    }
+}
+```
+
+```java
+package com.kiy.filter;
+
+import org.apache.shiro.subject.Subject;
+import org.apache.shiro.util.StringUtils;
+import org.apache.shiro.web.filter.AccessControlFilter;
+import org.apache.shiro.web.util.WebUtils;
+
+import javax.servlet.ServletRequest;
+import javax.servlet.ServletResponse;
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+import java.util.HashMap;
+import java.util.Map;
+
+/**
+ * @title:
+ * @author: 80002834
+ * @create: 2020-08-14 17:49:44
+ **/
+public class PermissionFilter extends AccessControlFilter {
+    @Override
+    protected boolean isAccessAllowed(ServletRequest request, ServletResponse response, Object mappedValue) throws Exception {
+        //先判断带参数的权限判断
+        Subject subject = getSubject(request, response);
+        if(null != mappedValue){
+            String[] arra = (String[])mappedValue;
+            for (String permission : arra) {
+                if(subject.isPermitted(permission)){
+                    return Boolean.TRUE;
+                }
+            }
+        }
+        HttpServletRequest httpRequest = ((HttpServletRequest)request);
+
+        String uri = httpRequest.getRequestURI();//获取URI
+        String basePath = httpRequest.getContextPath();//获取basePath
+        if(null != uri && uri.startsWith(basePath)){
+            uri = uri.replaceFirst(basePath, "");
+        }
+        if(subject.isPermitted(uri)){
+            return Boolean.TRUE;
+        }
+        if(ShiroFilterUtils.isAjax(request)){
+            Map<String,String> resultMap = new HashMap<String, String>();
+            resultMap.put("login_status", "401");
+            resultMap.put("message", "权限不足");//！
+            ShiroFilterUtils.out(response, resultMap);
+        }
+        return Boolean.FALSE;
+    }
+
+    @Override
+    protected boolean onAccessDenied(ServletRequest request, ServletResponse response) throws Exception {
+        Subject subject = getSubject(request, response);
+        if (null == subject.getPrincipal()) {//表示没有登录，重定向到登录页面
+
+            saveRequest(request);
+            WebUtils.issueRedirect(request, response, ShiroFilterUtils.LOGIN_URL);
+        } else {
+            if (StringUtils.hasText(ShiroFilterUtils.UNAUTHORIZED)) {//如果有未授权页面跳转过去
+                WebUtils.issueRedirect(request, response, ShiroFilterUtils.UNAUTHORIZED);
+            } else {//否则返回401未授权状态码
+                WebUtils.toHttp(response).sendError(HttpServletResponse.SC_UNAUTHORIZED);
+            }
+        }
+        return Boolean.FALSE;
+    }
+}
+```
+
+```java
+package com.kiy.filter;
+import javax.servlet.ServletRequest;
+import javax.servlet.ServletResponse;
+
+import org.apache.shiro.session.SessionException;
+import org.apache.shiro.subject.Subject;
+import org.apache.shiro.web.filter.authc.LogoutFilter;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+/**
+ *
+ * @author 01369611
+ * @author 80002826
+ *
+ */
+public class CustomerLogoutFilter extends LogoutFilter {
+    private static final Logger logger = LoggerFactory.getLogger(CustomerLogoutFilter.class);
+
+    public CustomerLogoutFilter(){super();}
+
+    @Override
+    protected boolean preHandle(ServletRequest request,ServletResponse response) throws Exception{
+        Subject subject = getSubject(request, response);
+        String redirectUrl = getRedirectUrl(request, response, subject);
+        try{
+            subject.logout();
+        }catch(SessionException ise){
+            logger.debug("登出时session处理出错",ise);
+        }
+        issueRedirect(request, response, redirectUrl);
+        return false;
+    }
+}
+
+```
+
+```java
+package com.kiy.filter;
+
+import net.sf.json.JSONObject;
+import org.springframework.beans.factory.annotation.Value;
+
+import javax.servlet.ServletRequest;
+import javax.servlet.ServletResponse;
+import javax.servlet.http.HttpServletRequest;
+import java.io.IOException;
+import java.io.PrintWriter;
+import java.util.Map;
+
+/**
+ *
+ */
+
+public class ShiroFilterUtils {
+
+    public static String LOGIN_URL = "login";
+
+    public static String UNAUTHORIZED = "/html/refuse.html";
+
+    /**
+     * 是否是Ajax请求
+     * @param request
+     * @return
+     */
+    public static boolean isAjax(ServletRequest request){
+        return "XMLHttpRequest".equalsIgnoreCase(((HttpServletRequest) request).getHeader("X-Requested-With"));
+    }
+
+    /**
+     * response 输出JSON
+     * @param response
+     * @param resultMap
+     * @throws IOException
+     */
+    public static void out(ServletResponse response, Map<String, String> resultMap){
+
+        PrintWriter out = null;
+        try {
+            response.setCharacterEncoding("UTF-8");
+            out = response.getWriter();
+            out.println(JSONObject.fromObject(resultMap).toString());
+        } catch (Exception e) {
+            System.out.println(e);
+        }finally{
+            if(null != out){
+                out.flush();
+                out.close();
+            }
+        }
+    }
+}
+```
+
+```java
+/**
+ *  测试方式
+ */
+ package com.kiy.controller;
+
+import org.apache.shiro.SecurityUtils;
+import org.apache.shiro.authz.annotation.Logical;
+import org.apache.shiro.authz.annotation.RequiresPermissions;
+import org.apache.shiro.authz.annotation.RequiresRoles;
+import org.springframework.stereotype.Controller;
+import org.springframework.ui.Model;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestMethod;
+import org.springframework.web.bind.annotation.ResponseBody;
+import org.springframework.web.servlet.ModelAndView;
+
+import javax.servlet.http.HttpServletRequest;
+
+/**
+ * @title:
+ * @author: 80002834
+ * @create: 2020-08-12 16:46:42
+ **/
+@Controller
+public class TestController {
+    @RequestMapping(value = "test",method = RequestMethod.GET)
+    @ResponseBody
+    public String test(){
+        System.out.println(SecurityUtils.getSubject().getSession());
+        return "this";
+    }
+
+    @RequestMapping("login")
     public String login(HttpServletRequest request, Model mv) {
         String e = (String) request.getAttribute("shiroLoginFailure");
         if (e != null) {
@@ -282,6 +610,7 @@ public class MyRealm extends AuthorizingRealm {
         }
         return "login";
     }
+}
 ```
 
 ```jsp
@@ -301,7 +630,7 @@ public class MyRealm extends AuthorizingRealm {
 </head>
 <body>
 <c:if test="${msg != null}">
-    <p class="p">${msg}</p>
+    <p class="p">${msg}</p >
 </c:if>
 <form action="${pageContext.request.contextPath}/login" method="post">
     <table>
@@ -318,122 +647,6 @@ public class MyRealm extends AuthorizingRealm {
 </form>
 </body>
 </html>
-```
-
-##### 拦截
-
-```java
-@Slf4j
-public class PermissionFilter extends AccessControlFilter {
-
-	@Override
-	protected boolean isAccessAllowed(ServletRequest request,
-			ServletResponse response, Object mappedValue) throws Exception {
-		
-		//先判断带参数的权限判断
-		Subject subject = getSubject(request, response);
-		if(null != mappedValue){
-			String[] arra = (String[])mappedValue;
-			for (String permission : arra) {
-				if(subject.isPermitted(permission)){
-					return Boolean.TRUE;
-				}
-			}
-		}
-		HttpServletRequest httpRequest = ((HttpServletRequest)request);
-
-		String uri = httpRequest.getRequestURI();//获取URI
-		String basePath = httpRequest.getContextPath();//获取basePath
-		if(null != uri && uri.startsWith(basePath)){
-			uri = uri.replaceFirst(basePath, "");
-		}
-        // 进入下一个拦截器
-		if(subject.isPermitted(uri)){
-			return Boolean.TRUE;
-		}
-		if(ShiroFilterUtils.isAjax(request)){
-            // 如果是ajax请求，则直接返回权限不足
-			Map<String,String> resultMap = new HashMap<String, String>();
-			log.debug(getClass().toString(), "权限不足，并且是Ajax请求！");
-			resultMap.put("login_status", "401");
-			resultMap.put("message", "权限不足");//！
-			ShiroFilterUtils.out(response, resultMap);
-		}
-        // 非ajax请求，跳转到onAccessDenied
-		return Boolean.FALSE;
-	}
-
-	@Override
-	protected boolean onAccessDenied(ServletRequest request,
-			ServletResponse response) throws Exception {
-		
-			Subject subject = getSubject(request, response);
-	        if (null == subject.getPrincipal()) {//表示没有登录，重定向到登录页面
-                // 获取链接并且保存，在login完后再跳转回来，很显然，在tdop_manager里面这行代码是抄的，并无实际意义
-	            saveRequest(request);  
-	            WebUtils.issueRedirect(request, response, ShiroFilterUtils.LOGIN_URL);
-	        } else {  
-	            if (StringUtils.hasText(ShiroFilterUtils.UNAUTHORIZED)) {//如果有未授权页面跳转过去
-	                WebUtils.issueRedirect(request, response, ShiroFilterUtils.UNAUTHORIZED);
-	            } else {//否则返回401未授权状态码
-	                WebUtils.toHttp(response).sendError(HttpServletResponse.SC_UNAUTHORIZED);
-	            }  
-	        }  
-		return Boolean.FALSE;
-	}
-}
-```
-
-
-
-
-
-
-
-
-
-
-
-
-
-##### 缓存
-
-
-
-
-
-##### 会话
-
-```xml
-<!-- Shiro的Web过滤器 -->
-<bean id="shiroFilter" class="org.apache.shiro.spring.web.ShiroFilterFactoryBean">
-    <property name="securityManager" ref="securityManager" />
-    <property name="loginUrl" value="${shiro.login.url}"/>
-    <property name="successUrl" value="/pages/index.html" />
-    <!-- 授权失败跳转路径 -->
-    <property name="unauthorizedUrl" value="/pages/unauthorized.html" />
-    <property name="filters">
-        <util:map>
-            <entry key="cas" value-ref="casFilter"/>
-            <entry key="logout" value-ref="logoutFilter"/>
-            <entry key="rolesOR" value-ref="rolesOR"></entry>
-            <entry key="permission" value-ref="permission"></entry>
-        </util:map>
-    </property>
-    <!-- 拦截规则 -->
-    <property name="filterChainDefinitions">
-        <value>
-            /login-cas = cas
-            /pages/unauthorized** = anon
-            /pages/favicon** = anon
-            /logout = logout
-            /assets/** = anon
-            /pages/index** = authc
-            /pages/** = authc,rolesOR[]
-            /** = anon
-        </value>
-    </property>
-</bean>
 ```
 
 ##### 会话
@@ -464,8 +677,13 @@ Session getSession(SessionKey key);
 
 # shiro默认提供了三种session管理器
 DefaultSessionManager:DefaultSecurityManager 使用的默认实现，用于 JavaSE 环境
-ServletContainerSessionManager:DefaultWebSecurityManager 使用的默认实现，用于 Web 环境，
-DefaultWebSessionManager:用于 Web 环境的实现，自己维护着会话，直接废弃了 Servlet 容器的会话管理。
+ServletContainerSessionManager:DefaultWebSecurityManager 使用的默认实现，用于 Web 环境，其直接使用 Servlet 容器的会话，Session 的超时依赖于底层 Servlet 容器的超时时间，可以在 web.xml 中配置其会话的超时时间（分钟为单位）：
+DefaultWebSessionManager:用于 Web 环境的实现，可以替代 ServletContainerSessionManager，自己维护着会话，直接废弃了 Servlet 容器的会话管理。
+
+# 默认情况下session中只存在了三条数据
+登录状态：org.apache.shiro.subject.support.DefaultSubjectContext_AUTHENTICATED_SESSION_KEY:true
+用户ip地址：org.apache.shiro.web.session.HttpServletSession.HOST_SESSION_KEY:0:0:0:0:0:0:0:1
+用户标识(名称):org.apache.shiro.subject.support.DefaultSubjectContext_PRINCIPALS_SESSION_KEY:lisi
 ```
 
 ```ini
@@ -507,429 +725,19 @@ public class MySessionListener1 implements SessionListener {
 
 
 
+##### 缓存
 
+**权限信息存放在数据库中时，对于每次前端的访问请求都需要进行一次数据库查询**。特别是在大量使用shiro的jsp标签的场景下，对应前端的一个页面访问请求会同时出现很多的权限查询操作，这对于权限信息变化不是很频繁的场景，每次前端页面访问都进行大量的权限数据库查询是非常不经济的。因此，非常有必要对权限数据使用缓存方案。
 
-##### Redis连接
-
-一个哨兵集群可以管理多个redis集群,直接连接哨兵获取所有的redis集群信息
-
-
-
-```xml
-# spring-redis.xml
-<?xml version="1.0" encoding="UTF-8"?>
-<beans xmlns="http://www.springframework.org/schema/beans"
-       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-       xsi:schemaLocation="http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans.xsd">
-
-    <!-- redis集群配置 哨兵模式 -->
-    <bean id="sentinelConfiguration" class="org.springframework.data.redis.connection.RedisSentinelConfiguration">
-        <property name="master">
-            <bean class="org.springframework.data.redis.connection.RedisNode">
-                <!--  这个值要和Sentinel中指定的master的值一致，不然启动时找不到Sentinel会报错的   -->
-                <property name="name" value="${redis.master1.name}"/>
-            </bean>
-        </property>
-        <!--  记住了,这里是指定Sentinel的IP和端口，不是Master和Slave的   -->
-        <property name="sentinels">
-            <set>
-                <!-- 我这里就配置一个哨兵 -->
-                <bean class="org.springframework.data.redis.connection.RedisNode">
-                    <constructor-arg name="host" value="${redis.sentinel1.address}"/>
-                    <constructor-arg name="port" value="${redis.sentinel1.port}"/>
-                </bean>
-                <bean class="org.springframework.data.redis.connection.RedisNode">
-                    <constructor-arg name="host" value="${redis.sentinel2.address}"/>
-                    <constructor-arg name="port" value="${redis.sentinel2.port}"/>
-                </bean>
-                <bean class="org.springframework.data.redis.connection.RedisNode">
-                    <constructor-arg name="host" value="${redis.sentinel3.address}"/>
-                    <constructor-arg name="port" value="${redis.sentinel3.port}"/>
-                </bean>
-            </set>
-        </property>
-    </bean>
-    <bean id="jedisConnectionFactory" class="org.springframework.data.redis.connection.jedis.JedisConnectionFactory">
-        <constructor-arg name="sentinelConfig" ref="sentinelConfiguration"/>
-        <constructor-arg name="poolConfig" ref="jedisPoolConfig"/>
-        <property name="password" value="${redis.master.password}"/>
-        <property name="database" value="2"></property>
-    </bean>
-
-    <!--Jedis Pool Config-->
-    <bean id="jedisPoolConfig" class="redis.clients.jedis.JedisPoolConfig">
-
-        <!--大空闲连接数-->
-        <property name="maxIdle" value="1000"/>
-
-        <!-- 逐出检查每次扫描的最多的连接数-->
-        <property name="numTestsPerEvictionRun" value="1400"/>
-
-        <!--逐出扫描的时间间隔(毫秒) 如果为负数,则不运行逐出线程, 默认-1-->
-        <property name="timeBetweenEvictionRunsMillis" value="30000"/>
-
-        <!--逐出连接的最小空闲时间 -->
-        <property name="minEvictableIdleTimeMillis" value="-1"/>
-
-        <!--对象空闲多久后逐出, 当空闲时间>该值 且 空闲连接>最大空闲数 时直接逐出,不再根据MinEvictableIdleTimeMillis判断  (默认逐出策略)-->
-        <property name="softMinEvictableIdleTimeMillis" value="10000"/>
-
-
-        <!--在获取连接的时候检查有效性, 默认false-->
-        <property name="testOnBorrow" value="false"/>
-
-        <!-- 在空闲时检查有效性, 默认false-->
-        <property name="testWhileIdle" value="true"/>
-
-        <!--在进行returnObject对返回的connection进行有效性校验-->
-        <property name="testOnReturn" value="false"/>
-
-    </bean>
-
-    <bean id="redisTemplate" class="org.springframework.data.redis.core.RedisTemplate" >
-        <property name="connectionFactory" ref="jedisConnectionFactory" />
-        <!--如果不配置Serializer，那么存储的时候缺省使用String，如果用User类型存储，那么会提示错误User can't cast to String！！  -->
-        <property name="keySerializer" >
-            <bean class="org.springframework.data.redis.serializer.JdkSerializationRedisSerializer" />
-        </property>
-        <property name="valueSerializer" >
-            <bean class="org.springframework.data.redis.serializer.JdkSerializationRedisSerializer" />
-        </property>
-        <property name="hashKeySerializer">
-            <bean class="org.springframework.data.redis.serializer.JdkSerializationRedisSerializer"/>
-        </property>
-        <property name="hashValueSerializer">
-            <bean class="org.springframework.data.redis.serializer.JdkSerializationRedisSerializer"/>
-        </property>
-        <!--开启事务  -->
-        <property name="enableTransactionSupport" value="true"></property>
-    </bean >
-</beans>
+```
+缓存解决的问题就是doGetAuthorizationInfo多次调用的问题
 ```
 
-```xml
-# spring-shiro.xml
-<?xml version="1.0" encoding="UTF-8"?>
-<beans xmlns="http://www.springframework.org/schema/beans"
-       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-       xmlns:context="http://www.springframework.org/schema/context"
-       xmlns:util="http://www.springframework.org/schema/util"
-       xmlns:mvc="http://www.springframework.org/schema/mvc"
-       xmlns:aop="http://www.springframework.org/schema/aop" xmlns:c="http://www.springframework.org/schema/c"
-       xsi:schemaLocation="http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans.xsd
-	http://www.springframework.org/schema/context
-	http://www.springframework.org/schema/context/spring-context.xsd
-	http://www.springframework.org/schema/util
-	http://www.springframework.org/schema/util/spring-util.xsd
-	http://www.springframework.org/schema/mvc http://www.springframework.org/schema/mvc/spring-mvc-3.2.xsd http://www.springframework.org/schema/aop http://www.springframework.org/schema/aop/spring-aop.xsd">
-
-    <!-- shiro配置 -->
-    <!-- cas过滤器 -->
-    <bean id="casFilter" class="org.apache.shiro.cas.CasFilter">
-        <property name="failureUrl" value="${shiro.login.url}"/>
-        <!--<property name="failureUrl" value="/pages/index.html"/>-->
-    </bean>
-
-    <!-- 退出登录过滤器 -->
-    <bean id="logoutFilter" class="com.sf.tdop.app.manager.shiro.filter.CoustomLogoutFilter">
-        <!--重定向 -->
-        <property name="redirectUrl" value="${shiro.logout.url}" />
-    </bean>
-
-    <!-- 角色过滤器 -->
-    <bean id="rolesOR" class="com.sf.tdop.app.manager.shiro.filter.RolesFilter" />
-
-    <bean id="permission" class="com.sf.tdop.app.manager.shiro.filter.PermissionFilter"></bean>
-
-    <!-- Shiro的Web过滤器 -->
-    <bean id="shiroFilter" class="org.apache.shiro.spring.web.ShiroFilterFactoryBean">
-        <property name="securityManager" ref="securityManager" />
-        <property name="loginUrl" value="${shiro.login.url}"/>
-        <property name="successUrl" value="/pages/index.html" />
-        <!-- 授权失败跳转路径 -->
-        <property name="unauthorizedUrl" value="/pages/unauthorized.html" />
-        <property name="filters">
-            <util:map>
-                <entry key="cas" value-ref="casFilter"/>
-                <entry key="logout" value-ref="logoutFilter"/>
-                <entry key="rolesOR" value-ref="rolesOR"></entry>
-                <entry key="permission" value-ref="permission"></entry>
-            </util:map>
-        </property>
-        <property name="filterChainDefinitions">
-            <value>
-                /login-cas = cas
-                /pages/unauthorized** = anon
-                /pages/favicon** = anon
-                /logout = logout
-                /assets/** = anon
-                /pages/index** = authc
-                /pages/** = authc,rolesOR[]
-                /** = anon
-            </value>
-        </property>
-    </bean>
-
-    <bean class="org.springframework.beans.factory.config.MethodInvokingFactoryBean">
-        <!-- 		<property name="targetObject" ref="shiroFilter" />
-                <property name="targetMethod" value="setFilterChainResolver" />
-                <property name="arguments" ref="filterChainResolver" /> -->
-
-        <property name="staticMethod" value="org.apache.shiro.SecurityUtils.setSecurityManager"/>
-        <property name="arguments" ref="securityManager"/>
-    </bean>
-
-    <!--配置权限核心管理器 -->
-    <bean id="securityManager" class="org.apache.shiro.web.mgt.DefaultWebSecurityManager">
-        <!-- 缓存管理器 -->
-<!--        <property name="cacheManager" ref="cacheManager" />-->
-        <!-- session管理器 -->
-        <property name="sessionManager" ref="shiroRedisSessionManager"/>
-        <property name="cacheManager" ref="shiroRedisCacheManager"/>
-        <!-- 验证 -->
-        <property name="authenticator" ref="authenticator"/>
-        <!-- 多个验证策略 realmes -->
-        <property name="realms">
-            <list>
-                <!-- 这个认证，有一个先后的顺序 -->
-                <ref bean="myCasRealm"/>
-            </list>
-        </property>
-        <property name="subjectFactory" ref="casSubjectFactory"/>
-    </bean>
-
-    <!-- 授权策略 -->
-    <bean id="authenticator" class="org.apache.shiro.authc.pam.ModularRealmAuthenticator">
-        <property name="authenticationStrategy" >
-            <!-- 所有Reaml都全部匹配的策略 -->
-            <!-- <bean class="org.apache.shiro.authc.pam.AllSuccessfulStrategy"/> -->
-            <bean class="org.apache.shiro.authc.pam.AtLeastOneSuccessfulStrategy"/>
-        </property>
-    </bean>
-
-    <!-- 自定义cas realm -->
-    <bean id="myCasRealm" class="com.sf.tdop.app.manager.shiro.realm.MyCasRealm">
-        <!-- 认证通过后的默认角色 -->
-        <property name="defaultRoles" value="普通用户" />
-        <!-- cas服务端地址前缀 -->
-        <property name="casServerUrlPrefix" value="${shiro.casServerPrefix.url}" />
-        <!-- 应用服务地址，用来接收cas服务端票据 -->
-        <property name="casService" value="${shiro.casService.url}" />
-
-        <property name="cacheManager" ref="shiroRedisCacheManager"/>
-        <!--        <property name="credentialsMatcher" ref="myCredentialsMatcher"/>-->
-        <!-- 打开缓存 -->
-        <property name="cachingEnabled" value="true"/>
-        <!-- 打开身份认证缓存 -->
-        <property name="authenticationCachingEnabled" value="true"/>
-        <!-- 打开授权缓存 -->
-        <property name="authorizationCachingEnabled" value="true"/>
-        <!-- 缓存AuthenticationInfo信息的缓存名称 -->
-        <property name="authenticationCacheName" value="authenticationCache"/>
-        <!-- 缓存AuthorizationInfo信息的缓存名称 -->
-        <property name="authorizationCacheName" value="authorizationCache"/>
-    </bean>
 
 
-    <!--默认缓存管理器 -->
-<!--    <bean id="cacheManager" class="org.apache.shiro.cache.MemoryConstrainedCacheManager" />-->
-
-    <!-- 保证实现了Shiro内部lifecycle函数的bean执行 -->
-    <bean id="lifecycleBeanPostProcessor" class="org.apache.shiro.spring.LifecycleBeanPostProcessor" />
-
-    <!-- AOP式方法级权限检查 -->
-    <bean class="org.springframework.aop.framework.autoproxy.DefaultAdvisorAutoProxyCreator"
-        depends-on="lifecycleBeanPostProcessor">
-        <property name="proxyTargetClass" value="true" />
-    </bean>
-
-    <bean class="org.apache.shiro.spring.security.interceptor.AuthorizationAttributeSourceAdvisor">
-        <property name="securityManager" ref="securityManager" />
-    </bean>
-
-    <bean id="casSubjectFactory" class="org.apache.shiro.cas.CasSubjectFactory"/>
-
-    <bean id="sessionDao" class="com.sf.tdop.app.manager.shiro.cache.SessionDao">
-        <constructor-arg ref="redisTemplate"/>
-        <property name="sessionIdGenerator">
-            <bean class="org.apache.shiro.session.mgt.eis.JavaUuidSessionIdGenerator"/>
-        </property>
-    </bean>
-
-    <bean id="shiroRedisSessionManager" class="com.sf.tdop.app.manager.shiro.cache.TdopWebSessionManager">
-        <property name="sessionDAO" ref="sessionDao"/>
-        <!--超时 ms-->
-        <property name="globalSessionTimeout" value="1800000"/>
-        <!-- 相隔多久检查一次session的有效性   -->
-        <property name="sessionValidationInterval" value="900000"/>
-        <!-- 删除失效session -->
-        <property name="deleteInvalidSessions" value="true"/>
-    </bean>
-
-    <bean id="shiroRedisCacheManager" class="com.sf.tdop.app.manager.shiro.cache.ShiroRedisCacheManager">
-        <property name="cacheManager" ref="cacheManager"/>
-    </bean>
-
-    <bean id="cacheManager" class="org.springframework.data.redis.cache.RedisCacheManager">
-        <constructor-arg name="template" ref="redisTemplate"/>
-        <!-- 默认缓存10分钟 -->
-        <property name="defaultExpiration" value="600"/>
-        <property name="usePrefix" value="true"/>
-        <!-- cacheName 缓存超时配置，半小时，一小时，一天 -->
-        <property name="expires">
-            <map key-type="java.lang.String" value-type="java.lang.Long">
-                <entry key="halfHour" value="1800"/>
-                <entry key="hour" value="3600"/>
-                <entry key="oneDay" value="86400"/>
-                <!-- shiro cache keys 对缓存的配置 -->
-                <entry key="authorizationCache" value="1800"/>
-                <entry key="authenticationCache" value="1800"/>
-                <entry key="activeSessionCache" value="1800"/>
-            </map>
-        </property>
-    </bean>
-</beans>
-```
-
-```java
-#SessionDao
-package com.sf.tdop.app.manager.shiro.cache;
-
-import org.apache.commons.collections.CollectionUtils;
-import org.apache.shiro.session.Session;
-import org.apache.shiro.session.UnknownSessionException;
-import org.apache.shiro.session.mgt.eis.AbstractSessionDAO;
-import org.springframework.data.redis.core.RedisTemplate;
-import org.springframework.data.redis.core.ValueOperations;
-
-import java.io.Serializable;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.HashSet;
-import java.util.Set;
-import java.util.concurrent.TimeUnit;
-
-/**
- * @ClassName : SessionDao  //类名
- * @Description :   //描述
- * @Author : HTB  //作者
- * @Date: 2020-08-18 00:49  //时间
- */
-
-public class SessionDao extends AbstractSessionDAO {
-    /**
-     * key前缀
-     */
-    private static final String SHIRO_REDIS_SESSION_KEY_PREFIX = "shiro.redis.session_";
-
-    private final RedisTemplate<Object, Session> redisTemplate;
-    private final ValueOperations<Object, Session> valueOperations;
 
 
-    public SessionDao(RedisTemplate<Object, Session> redisTemplate) {
-        this.redisTemplate = redisTemplate;
-        this.valueOperations = redisTemplate.opsForValue();
-    }
 
-    @Override
-    protected Serializable doCreate(Session session) {
-        Serializable sessionId = this.generateSessionId(session);
-        this.assignSessionId(session, sessionId);
-        valueOperations.set(generateKey(sessionId), session, session.getTimeout(), TimeUnit.MILLISECONDS);
-        return sessionId;
-    }
-
-    @Override
-    protected Session doReadSession(Serializable sessionId) {
-        return valueOperations.get(generateKey(sessionId));
-    }
-
-    @Override
-    public void update(Session session) throws UnknownSessionException {
-        valueOperations.set(generateKey(session.getId()), session, session.getTimeout(), TimeUnit.MILLISECONDS);
-    }
-
-    @Override
-    public void delete(Session session) {
-        redisTemplate.delete(generateKey(session.getId()));
-    }
-
-    @Override
-    public Collection<Session> getActiveSessions() {
-        Set<Object> keySet = redisTemplate.keys(generateKey("*"));
-        Set<Session> sessionSet = new HashSet<>();
-        if (CollectionUtils.isEmpty(keySet)) {
-            return Collections.emptySet();
-        }
-        for (Object key : keySet) {
-            sessionSet.add(valueOperations.get(key));
-        }
-        return sessionSet;
-    }
-
-    /**
-     * 重组key
-     * 区别其他使用环境的key
-     *
-     * @param key
-     * @return
-     */
-    private String generateKey(Object key) {
-        return SHIRO_REDIS_SESSION_KEY_PREFIX + this.getClass().getName() +"_"+ key;
-    }
-}
-```
-
-```java
-@Override
-protected boolean onAccessDenied(ServletRequest request,
-	ServletResponse response) throws Exception {
-		
-	Subject subject = getSubject(request, response);
-	if (null == subject.getPrincipal()) {//表示没有登录，重定向到登录页面
-
-	     saveRequest(request);  
-	            WebUtils.issueRedirect(request, response, ShiroFilterUtils.LOGIN_URL);
-	 } else {  
-	 	 if (StringUtils.hasText(ShiroFilterUtils.UNAUTHORIZED)) {//如果有未授权页面跳转过去
-	                WebUtils.issueRedirect(request, response, ShiroFilterUtils.UNAUTHORIZED);
-	            } else {//否则返回401未授权状态码
-	                WebUtils.toHttp(response).sendError(HttpServletResponse.SC_UNAUTHORIZED);
-	     }  
- }  
-return Boolean.FALSE;
-```
-
-```java
-@RequestMapping(value = "queryTransitDepotNo", method = RequestMethod.GET)
-@ApiOperation("获取中转场信息")
-@ResponseBody
-@RequiresPermissions(value ={"/overseaJobCarLogo/queryTransitDepotNo", "/overseaJobCarLogo/**"}, logical = Logical.OR)
-public Result<String> queryTransitDepotNo(){
-        OperatorDetailResp currentUser = SubjectUtil.getCurrentUser();
-        Result<String> result = new Result<>();
-        result.setObj(currentUser.getTransitDepotNo());
-        result.setSuccess(true);
-        return result;
-}
-```
-
-````java
-@Slf4j
-public class RolesFilter extends RolesAuthorizationFilter {
-    @Override
-    public boolean isAccessAllowed(ServletRequest request, ServletResponse response, Object mappedValue) {
-       // 此处可以进行再一次的拦截
-    }
-
-    @Override
-    protected boolean onAccessDenied(ServletRequest request, ServletResponse response)  
-            throws IOException {
-        // 对于访问失败的处理
-        return false;  
-    }
-}
-````
 
 
 
